@@ -51,7 +51,10 @@ uv run resistance_cli.py -p COM3 --action unshort
 ```
 
 #### 参数说明
-- `-p`, `--port`: **(必填)** 串口号 (如 COM1, COM3)。
+- `-p`, `--port`: **(必填)** 串口号。
+  - Windows: `COMx` (如 `COM3`)
+  - Linux: `/dev/ttyUSBx` (如 `/dev/ttyUSB0`)
+
 - `-v`, `--value`: 设置电阻值，支持数字或 "OPEN"。
 - `--action`: 执行特定动作，可选值: `connect`, `disconnect`, `short`, `unshort`。
 - `--verbose`: 显示详细的执行过程和日志信息（默认只输出结果）。
@@ -71,7 +74,10 @@ uv run temp_resistance_cli.py -p COM3 -t 25 -f ntc_res.txt
 ```
 
 ### 参数说明
-- `-p`, `--port`: **(必填)** 串口号 (如 COM1, COM3)。
+- `-p`, `--port`: **(必填)** 串口号。
+  - Windows: `COMx` (如 `COM3`)
+  - Linux: `/dev/ttyUSBx` (如 `/dev/ttyUSB0`)
+
 - `-t`, `--temp`: **(必填)** 目标温度 (例如: 25, -40, 25C)。
 - `-f`, `--file`: **(必填)** 电阻值对应文件路径 (例如: ntc_res.txt)。
 - `--verbose`: 显示详细的执行过程和日志信息（默认只输出结果）。
