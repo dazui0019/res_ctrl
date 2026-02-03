@@ -5,92 +5,89 @@ import sys
 import argparse
 import serial
 import time
-import logging
 from pathlib import Path
 from serial.tools import list_ports
 
-# 配置日志
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler()
-    ]
-)
 
 class ResistanceTester:
-    def __init__(self, port="COM1", baudrate=9600):
+    def __init__(self, port="COM1", baudrate=9600, verbose=False):
         """初始化电阻测试器"""
         self.port = port
         self.baudrate = baudrate
         self.ser = None
         self.is_connected = False  # 跟踪电阻连接状态
+        self.verbose = verbose
+
+    def log(self, message):
+        """根据verbose设置打印日志"""
+        if self.verbose:
+            print(message)
         
     def connect_serial(self):
         """连接串口"""
         try:
             self.ser = serial.Serial(self.port, self.baudrate, timeout=1)
-            logging.info(f"成功连接到串口 {self.port}")
+            self.log(f"成功连接到串口 {self.port}")
             return True
         except Exception as e:
-            logging.error(f"连接串口失败: {e}")
+            print(f"连接串口失败: {e}")
             return False
     
     def disconnect_serial(self):
         """断开串口连接"""
         if self.ser and self.ser.is_open:
             self.ser.close()
-            logging.info("串口连接已关闭")
+            self.log("串口连接已关闭")
     
     def send_command(self, command):
         """发送AT指令"""
         if not self.ser or not self.ser.is_open:
-            logging.error("串口未连接")
+            print("串口未连接")
             return False
         
         try:
             self.ser.write(command.encode())
             time.sleep(0.5)  # 等待响应
             response = self.ser.read_all().decode(errors='ignore')
-            logging.info(f"发送: {command.strip()}, 响应: {response.strip()}")
+            self.log(f"发送: {command.strip()}, 响应: {response.strip()}")
             return True
         except Exception as e:
-            logging.error(f"发送指令失败: {e}")
+            print(f"发送指令失败: {e}")
             return False
 
     def disconnect_resistance(self):
         """将电阻设置为开路状态"""
-        logging.info("正在将电阻设置为开路状态...")
+        self.log("正在将电阻设置为开路状态...")
         result = self.send_command("AT+RES.DISCONNECT\r\n")
         if result:
-            logging.info("电阻已成功设置为开路状态")
+            self.log("电阻已成功设置为开路状态")
             self.is_connected = False
         return result
         
     def connect_resistance(self):
         """将电阻设置为连接状态"""
-        logging.info("正在将电阻设置为连接状态...")
+        self.log("正在将电阻设置为连接状态...")
         result = self.send_command("AT+RES.CONNECT\r\n")
         if result:
-            logging.info("电阻已成功设置为连接状态")
+            self.log("电阻已成功设置为连接状态")
             self.is_connected = True
         return result
         
     def short_resistance(self):
         """将电阻设置为短路状态"""
-        logging.info("正在将电阻设置为短路状态...")
+        self.log("正在将电阻设置为短路状态...")
         result = self.send_command("AT+RES.SHORT\r\n")
         if result:
-            logging.info("电阻已成功设置为短路状态")
+            self.log("电阻已成功设置为短路状态")
             self.is_connected = True
         return result
     
     def unshort_resistance(self):
         """取消电阻短路状态"""
-        logging.info("正在取消电阻短路状态...")
+        self.log("正在取消电阻短路状态...")
         result = self.send_command("AT+RES.UNSHORTEN\r\n")
         if result:
-            logging.info("电阻短路状态已取消")
+            self.log("电阻短路状态已取消")
             self.is_connected = True
         return result
 
@@ -120,7 +117,7 @@ class ResistanceTester:
             # 设置电阻值
             success = self.send_command(f"AT+RES.SP={value}\r\n")
             if success:
-                print(f"已设置自定义电阻值: {value}Ω")
+                self.log(f"已设置自定义电阻值: {value}Ω")
                 return True
             else:
                 print(f"设置电阻值失败")
@@ -154,6 +151,7 @@ def main():
     parser.add_argument('-p', '--port', type=str, help='串口号 (例如: COM1)')
     parser.add_argument('-v', '--value', type=str, help='设置电阻值 (例如: 100, OPEN)')
     parser.add_argument('--action', type=str, choices=['connect', 'disconnect', 'short', 'unshort'], help='控制电阻状态')
+    parser.add_argument('--verbose', action='store_true', help='显示详细执行过程')
     
     args = parser.parse_args()
 
@@ -165,46 +163,59 @@ def main():
     # 确定串口
     port = args.port
     if not port:
-        available_ports = list_available_com_ports()
-        if available_ports:
-            port = available_ports[0]
-            print(f"未指定串口，自动选择第一个可用端口: {port}")
-        else:
-            print("错误: 未找到可用串口且未指定串口。")
-            sys.exit(1)
+        print("错误: 未指定串口。请使用 -p 或 --port 指定串口。")
+        list_available_com_ports()
+        sys.exit(1)
     
     # 初始化测试器
-    tester = ResistanceTester(port=port)
+    tester = ResistanceTester(port=port, verbose=args.verbose)
     
-    print(f"正在连接串口 {port}...")
+    if args.verbose:
+        print(f"正在连接串口 {port}...")
+        
     if not tester.connect_serial():
-        print(f"连接串口 {port} 失败")
+        # 错误信息已经在connect_serial中打印
         sys.exit(1)
 
     try:
         # 处理设置电阻值
         if args.value:
-            print(f"正在设置电阻值: {args.value}")
-            tester.set_custom_resistance(args.value)
+            if args.verbose:
+                print(f"正在设置电阻值: {args.value}")
+            if tester.set_custom_resistance(args.value):
+                 if not args.verbose:
+                     print(f"已设置自定义电阻值: {args.value}Ω")
 
         # 处理状态控制动作
         if args.action:
-            print(f"正在执行动作: {args.action}")
+            if args.verbose:
+                print(f"正在执行动作: {args.action}")
+                
+            success = False
             if args.action == 'connect':
-                tester.connect_resistance()
+                success = tester.connect_resistance()
+                if success and not args.verbose:
+                    print("电阻已成功设置为连接状态")
             elif args.action == 'disconnect':
-                tester.disconnect_resistance()
+                success = tester.disconnect_resistance()
+                if success and not args.verbose:
+                    print("电阻已成功设置为开路状态")
             elif args.action == 'short':
-                tester.short_resistance()
+                success = tester.short_resistance()
+                if success and not args.verbose:
+                    print("电阻已成功设置为短路状态")
             elif args.action == 'unshort':
-                tester.unshort_resistance()
+                success = tester.unshort_resistance()
+                if success and not args.verbose:
+                    print("电阻短路状态已取消")
                 
     except Exception as e:
         print(f"发生错误: {e}")
     finally:
         # 仅断开串口连接，保持电阻状态
         tester.disconnect_serial()
-        print("操作完成，串口已断开 (电阻状态保持)")
+        if args.verbose:
+            print("操作完成，串口已断开 (电阻状态保持)")
 
 if __name__ == "__main__":
     main()
