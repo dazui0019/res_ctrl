@@ -87,8 +87,8 @@ class ResistanceTester:
                 print(f"电阻值不能为负数")
                 return False
             
-            if res_value > 1000000:  # 1MΩ 上限
-                print(f"电阻值过大（最大支持1MΩ）")
+            if res_value > 7000000:  # 7MΩ 上限
+                print(f"电阻值过大（最大支持7MΩ）")
                 return False
             
             # 先连接电阻
@@ -189,6 +189,7 @@ def main():
     parser.add_argument('-t', '--temp', type=str, required=True, help='目标温度 (例如: 25, -40)')
     parser.add_argument('-f', '--file', type=str, required=True, help='电阻值对应文件路径 (例如: ntc_res.txt)')
     parser.add_argument('-p', '--port', type=str, help='串口号 (例如: COM1)')
+    parser.add_argument('-b', '--baudrate', type=int, default=9600, help='串口波特率 (默认: 9600)')
     parser.add_argument('-v', '--verbose', action='store_true', help='显示详细执行过程')
     
     args = parser.parse_args()
@@ -201,7 +202,7 @@ def main():
         sys.exit(1)
     
     # 初始化测试器
-    tester = ResistanceTester(port=port, verbose=args.verbose)
+    tester = ResistanceTester(port=port, baudrate=args.baudrate, verbose=args.verbose)
     
     # 加载电阻文件
     if not tester.load_resistance_values(args.file):

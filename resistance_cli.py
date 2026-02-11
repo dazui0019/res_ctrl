@@ -106,8 +106,8 @@ class ResistanceTester:
                 print(f"电阻值不能为负数")
                 return False
             
-            if value > 1000000:  # 1MΩ 上限
-                print(f"电阻值过大（最大支持1MΩ）")
+            if value > 7000000:  # 7MΩ 上限
+                print(f"电阻值过大（最大支持7MΩ）")
                 return False
             
             # 先连接电阻
@@ -149,6 +149,7 @@ def list_available_com_ports():
 def main():
     parser = argparse.ArgumentParser(description='电阻控制 CLI 工具')
     parser.add_argument('-p', '--port', type=str, help='串口号 (例如: COM1)')
+    parser.add_argument('-b', '--baudrate', type=int, default=9600, help='串口波特率 (默认: 9600)')
     parser.add_argument('-v', '--value', type=str, help='设置电阻值 (例如: 100, OPEN)')
     parser.add_argument('--action', type=str, choices=['connect', 'disconnect', 'short', 'unshort'], help='控制电阻状态')
     parser.add_argument('--verbose', action='store_true', help='显示详细执行过程')
@@ -168,7 +169,7 @@ def main():
         sys.exit(1)
     
     # 初始化测试器
-    tester = ResistanceTester(port=port, verbose=args.verbose)
+    tester = ResistanceTester(port=port, baudrate=args.baudrate, verbose=args.verbose)
     
     if args.verbose:
         print(f"正在连接串口 {port}...")
