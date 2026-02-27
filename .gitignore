@@ -13,3 +13,6 @@ resistance_test.log
 
 # Claude Code
 .claude/
+
+# Runtime config (user data)
+devices_config.json

@@ -10,13 +10,26 @@ from serial.tools import list_ports
 
 
 class ResistanceTester:
-    def __init__(self, port="COM1", baudrate=9600, verbose=False):
+    def __init__(self, port="COM1", baudrate=9600, verbose=False, sn=None):
         """初始化电阻测试器"""
         self.port = port
         self.baudrate = baudrate
         self.ser = None
         self.is_connected = False  # 跟踪电阻连接状态
         self.verbose = verbose
+        self.sn = sn  # RS485设备SN码
+
+    def _format_command(self, cmd):
+        """格式化指令，支持RS485 SN码"""
+        if self.sn:
+            # 格式: AT+XXX@<S/N>
+            # 在AT指令后插入@SN
+            if cmd.startswith("AT+"):
+                # 找到指令类型部分，如 RES.CONNECT
+                base = cmd.replace("\r\n", "")
+                # 插入@SN: AT+RES.CONNECT@SN -> AT+RES.CONNECT@<S/N>
+                return f"AT+{base[3:]}@{self.sn}\r\n"
+        return cmd
 
     def log(self, message):
         """根据verbose设置打印日志"""
@@ -44,7 +57,10 @@ class ResistanceTester:
         if not self.ser or not self.ser.is_open:
             print("串口未连接")
             return False
-        
+
+        # 格式化指令（支持RS485 SN码）
+        command = self._format_command(command)
+
         try:
             self.ser.write(command.encode())
             time.sleep(0.5)  # 等待响应
@@ -152,6 +168,7 @@ def main():
     parser.add_argument('-b', '--baudrate', type=int, default=9600, help='串口波特率 (默认: 9600)')
     parser.add_argument('-v', '--value', type=str, help='设置电阻值 (例如: 100, OPEN)')
     parser.add_argument('--action', type=str, choices=['connect', 'disconnect', 'short', 'unshort'], help='控制电阻状态')
+    parser.add_argument('--sn', type=str, help='RS485设备SN码 (例如: 001, 用于指令格式 AT+XXX@<S/N>)')
     parser.add_argument('--verbose', action='store_true', help='显示详细执行过程')
     
     args = parser.parse_args()
@@ -169,7 +186,11 @@ def main():
         sys.exit(1)
     
     # 初始化测试器
-    tester = ResistanceTester(port=port, baudrate=args.baudrate, verbose=args.verbose)
+    tester = ResistanceTester(port=port, baudrate=args.baudrate, verbose=args.verbose, sn=args.sn)
+
+    # 显示RS485模式信息
+    if args.sn:
+        print(f"RS485模式已启用，SN码: {args.sn}")
     
     if args.verbose:
         print(f"正在连接串口 {port}...")

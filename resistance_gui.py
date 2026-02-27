@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 电阻测试仪 UI 控制界面
-基于 tkinter 封装 resistance_cli.py 的功能
+支持多设备RS485控制
 """
 
 import tkinter as tk
@@ -15,124 +15,95 @@ from serial.tools import list_ports
 
 
 class ResistanceTester:
-    def __init__(self, port="COM1", baudrate=9600, verbose=False):
+    """电阻测试器类 - 每个实例对应一个SN设备"""
+    def __init__(self, port, baudrate, sn, serial_obj=None):
         self.port = port
         self.baudrate = baudrate
-        self.ser = None
+        self.sn = sn
+        self.ser = serial_obj  # 共享串口对象
         self.is_connected = False
-        self.verbose = verbose
+        self.verbose = True
+        self.current_resistance = None  # 当前电阻值
+        self.resistance_label = None  # 显示标签
+        self.name = "未命名"  # 设备名称
 
-    def log(self, message):
-        if self.verbose:
-            print(message)
-
-    def connect_serial(self):
-        try:
-            self.ser = serial.Serial(self.port, self.baudrate, timeout=1)
-            self.log(f"成功连接到串口 {self.port}")
-            return True
-        except Exception as e:
-            self.log(f"连接串口失败: {e}")
-            return False
-
-    def disconnect_serial(self):
-        if self.ser and self.ser.is_open:
-            self.ser.close()
-            self.log("串口连接已关闭")
+    def _format_command(self, cmd):
+        """格式化指令，支持RS485 SN码"""
+        if self.sn:
+            if cmd.startswith("AT+"):
+                base = cmd.replace("\r\n", "")
+                return f"AT+{base[3:]}@{self.sn}\r\n"
+        return cmd
 
     def send_command(self, command):
+        """发送指令"""
         if not self.ser or not self.ser.is_open:
-            self.log("串口未连接")
             return False
+
+        command = self._format_command(command)
 
         try:
             self.ser.write(command.encode())
-            time.sleep(0.5)
+            time.sleep(0.3)
             response = self.ser.read_all().decode(errors='ignore')
-            self.log(f"发送: {command.strip()}, 响应: {response.strip()}")
-            return True
+            return response
         except Exception as e:
-            self.log(f"发送指令失败: {e}")
+            return None
+
+    def set_resistance(self, value):
+        """设置电阻值"""
+        try:
+            if str(value).upper() == "OPEN":
+                self.send_command("AT+RES.DISCONNECT\r\n")
+                self.current_resistance = "OPEN"
+                self.update_label()
+                return True
+
+            val = float(value)
+            if val < 0 or val > 7000000:
+                return False
+
+            self.send_command("AT+RES.CONNECT\r\n")
+            time.sleep(0.1)
+            self.send_command(f"AT+RES.SP={val}\r\n")
+            self.current_resistance = f"{int(val)}Ω"
+            self.update_label()
+            return True
+        except:
             return False
+
+    def update_label(self):
+        """更新显示标签"""
+        if self.resistance_label:
+            self.resistance_label.config(text=f"当前: {self.current_resistance}")
 
     def disconnect_resistance(self):
-        self.log("正在将电阻设置为开路状态...")
-        result = self.send_command("AT+RES.DISCONNECT\r\n")
-        if result:
-            self.log("电阻已成功设置为开路状态")
-            self.is_connected = False
-        return result
+        """开路"""
+        return self.send_command("AT+RES.DISCONNECT\r\n")
 
     def connect_resistance(self):
-        self.log("正在将电阻设置为连接状态...")
-        result = self.send_command("AT+RES.CONNECT\r\n")
-        if result:
-            self.log("电阻已成功设置为连接状态")
-            self.is_connected = True
-        return result
+        """连接"""
+        return self.send_command("AT+RES.CONNECT\r\n")
 
     def short_resistance(self):
-        self.log("正在将电阻设置为短路状态...")
-        result = self.send_command("AT+RES.SHORT\r\n")
-        if result:
-            self.log("电阻已成功设置为短路状态")
-            self.is_connected = True
-        return result
+        """短路"""
+        return self.send_command("AT+RES.SHORT\r\n")
 
     def unshort_resistance(self):
-        self.log("正在取消电阻短路状态...")
-        result = self.send_command("AT+RES.UNSHORTEN\r\n")
-        if result:
-            self.log("电阻短路状态已取消")
-            self.is_connected = True
-        return result
-
-    def set_custom_resistance(self, resistance_value):
-        try:
-            if resistance_value.upper() == "OPEN":
-                return self.disconnect_resistance()
-
-            value = float(resistance_value)
-
-            if value < 0:
-                self.log("电阻值不能为负数")
-                return False
-
-            if value > 7000000:
-                self.log("电阻值过大（最大支持7MΩ）")
-                return False
-
-            if not self.connect_resistance():
-                return False
-
-            success = self.send_command(f"AT+RES.SP={value}\r\n")
-            if success:
-                self.log(f"已设置自定义电阻值: {value}Ω")
-                return True
-            else:
-                self.log("设置电阻值失败")
-                return False
-
-        except ValueError:
-            self.log("无效的电阻值，请输入数字或 OPEN")
-            return False
-        except Exception as e:
-            self.log(f"设置电阻值时出错: {e}")
-            return False
+        """取消短路"""
+        return self.send_command("AT+RES.UNSHORTEN\r\n")
 
 
 class NTCProfile:
     """NTC 阻值表"""
     def __init__(self, filepath):
         self.filepath = filepath
-        self.profiles = []  # [(temp, resistance), ...]
+        self.profiles = []
         self.load()
 
     def load(self):
-        """加载 NTC 阻值表"""
         if not os.path.exists(self.filepath):
             return
-
         with open(self.filepath, 'r', encoding='utf-8') as f:
             for line in f:
                 line = line.strip()
@@ -147,157 +118,122 @@ class NTCProfile:
                     except ValueError:
                         continue
 
-    def get_items(self):
-        """获取用于下拉框的选项"""
-        return [f"{temp} ({res}Ω)" for temp, res in self.profiles]
-
     def find_by_temp(self, temp_str):
-        """
-        根据温度字符串查找阻值
-        支持格式: "25", "25C", "-20", "-20C", "100C" 等
-        """
         temp_str = temp_str.strip().upper()
-
-        # 去除C后缀
         if temp_str.endswith('C'):
             temp_str = temp_str[:-1]
-
         try:
             temp_val = int(temp_str)
         except ValueError:
             return None
-
-        # 查找匹配的阻值
         for temp, res in self.profiles:
-            # 提取数字部分比较
             temp_num = int(temp.replace('C', ''))
             if temp_num == temp_val:
                 return res, temp
-
         return None
-
-    def get_resistance(self, index):
-        """根据索引获取阻值"""
-        if 0 <= index < len(self.profiles):
-            return str(self.profiles[index][1])
-        return None
-
-
-class ConfigManager:
-    """配置文件管理"""
-    def __init__(self, config_file):
-        self.config_file = config_file
-        self.config = self.load()
-
-    def load(self):
-        if os.path.exists(self.config_file):
-            try:
-                with open(self.config_file, 'r', encoding='utf-8') as f:
-                    return json.load(f)
-            except:
-                pass
-
-        # 默认配置
-        return {
-            "common_temps": ["25C", "0C", "-20C", "-40C", "100C", "50C"]
-        }
-
-    def save(self):
-        with open(self.config_file, 'w', encoding='utf-8') as f:
-            json.dump(self.config, f, ensure_ascii=False, indent=2)
-
-    def get_common_temps(self):
-        return self.config.get("common_temps", [])
-
-    def set_common_temps(self, temps):
-        self.config["common_temps"] = temps
-        self.save()
 
 
 class ResistanceGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("电阻测试仪控制")
-        self.root.geometry("520x680")
+        self.root.title("电阻测试仪控制 (多设备RS485)")
+        self.root.geometry("800x600")
 
-        self.tester = None
-        self.is_connected = False
+        # 串口和设备管理
+        self.ser = None
+        self.is_serial_connected = False
+        self.devices = {}  # {sn: ResistanceTester}
 
         # 路径
         base_dir = os.path.dirname(os.path.abspath(__file__))
         ntc_file = os.path.join(base_dir, "ntc_res.txt")
-        config_file = os.path.join(base_dir, "resistance_gui_config.json")
+        self.config_file = os.path.join(base_dir, "devices_config.json")
 
-        # 加载NTC和配置
         self.ntc = NTCProfile(ntc_file)
-        self.config = ConfigManager(config_file)
+
+        # 加载保存的设备
+        self.load_devices()
 
         self.setup_ui()
+        self.refresh_ports()
+
+        # 显示已加载的设备
+        if self.devices:
+            self.rebuild_device_grid()
+
+        self.add_log("程序启动，请先连接串口")
 
     def setup_ui(self):
         # ===== 串口设置 =====
-        frame_port = ttk.LabelFrame(self.root, text="串口设置", padding=10)
+        frame_port = ttk.LabelFrame(self.root, text="串口连接", padding=10)
         frame_port.pack(fill="x", padx=10, pady=5)
 
         ttk.Label(frame_port, text="串口:").grid(row=0, column=0, sticky="w")
-        self.port_combo = ttk.Combobox(frame_port, width=20, state="readonly")
+        self.port_combo = ttk.Combobox(frame_port, width=15, state="readonly")
         self.port_combo.grid(row=0, column=1, padx=5, sticky="w")
         ttk.Button(frame_port, text="刷新", command=self.refresh_ports).grid(row=0, column=2, padx=5)
 
-        ttk.Label(frame_port, text="波特率:").grid(row=1, column=0, sticky="w", pady=5)
+        ttk.Label(frame_port, text="波特率:").grid(row=0, column=3, sticky="w", padx=(20,0))
         self.baudrate_var = tk.IntVar(value=9600)
-        ttk.Entry(frame_port, textvariable=self.baudrate_var, width=22).grid(row=1, column=1, padx=5, sticky="w", pady=5)
+        ttk.Entry(frame_port, textvariable=self.baudrate_var, width=10).grid(row=0, column=4, padx=5)
 
-        self.connect_btn = ttk.Button(frame_port, text="连接串口", command=self.toggle_connection, width=20)
-        self.connect_btn.grid(row=2, column=0, columnspan=3, pady=10)
+        self.connect_btn = ttk.Button(frame_port, text="连接串口", command=self.toggle_serial_connection, width=15)
+        self.connect_btn.grid(row=0, column=5, padx=20)
 
-        # ===== NTC 档位选择 =====
-        frame_ntc = ttk.LabelFrame(self.root, text="NTC 温度设置", padding=10)
-        frame_ntc.pack(fill="x", padx=10, pady=5)
+        # ===== 设备管理 =====
+        frame_device = ttk.LabelFrame(self.root, text="设备管理", padding=10)
+        frame_device.pack(fill="x", padx=10, pady=5)
 
-        # 温度输入
-        temp_frame = ttk.Frame(frame_ntc)
-        temp_frame.pack(fill="x")
+        # 添加设备
+        add_frame = ttk.Frame(frame_device)
+        add_frame.pack(fill="x")
 
-        ttk.Label(temp_frame, text="输入温度(°C):").pack(side="left")
-        self.temp_entry = ttk.Entry(temp_frame, width=15)
-        self.temp_entry.pack(side="left", padx=5)
-        self.temp_entry.bind("<Return>", self.on_temp_input)  # 回车确认
+        ttk.Label(add_frame, text="名称:").pack(side="left")
+        self.name_entry = ttk.Entry(add_frame, width=10)
+        self.name_entry.pack(side="left", padx=5)
 
-        ttk.Button(temp_frame, text="设置", command=self.on_temp_input).pack(side="left", padx=5)
-        ttk.Label(temp_frame, text="(如: 25, -20, 100)", font=('', 8)).pack(side="left")
+        ttk.Label(add_frame, text="SN码:").pack(side="left")
+        self.sn_entry = ttk.Entry(add_frame, width=10)
+        self.sn_entry.pack(side="left", padx=5)
+        ttk.Button(add_frame, text="添加设备", command=self.add_device).pack(side="left", padx=5)
+        ttk.Label(add_frame, text="(如: 设备1, 001)", font=('', 8)).pack(side="left")
 
-        # 常用温度按钮
-        self.btn_frame = ttk.Frame(frame_ntc)
-        self.btn_frame.pack(fill="x", pady=10)
+        # 统一控制按钮
+        control_frame = ttk.Frame(frame_device)
+        control_frame.pack(fill="x", pady=5)
+        ttk.Label(control_frame, text="选中设备控制:").pack(side="left", padx=5)
+        ttk.Button(control_frame, text="连接", command=self.selected_connect).pack(side="left", padx=3)
+        ttk.Button(control_frame, text="开路", command=self.selected_open).pack(side="left", padx=3)
+        ttk.Button(control_frame, text="短路", command=self.selected_short).pack(side="left", padx=3)
+        ttk.Button(control_frame, text="取消短路", command=self.selected_unshort).pack(side="left", padx=3)
+        ttk.Button(control_frame, text="全选", command=self.select_all).pack(side="left", padx=10)
+        ttk.Button(control_frame, text="取消全选", command=self.deselect_all).pack(side="left", padx=3)
+        ttk.Button(control_frame, text="删除选中", command=self.delete_selected).pack(side="left", padx=10)
 
-        ttk.Label(self.btn_frame, text="常用温度:").pack(anchor="w", pady=(10, 5))
-        self.update_common_temp_buttons()
+        # 设备列表区域 - 使用Grid平铺
+        list_frame = ttk.Frame(frame_device)
+        list_frame.pack(fill="both", expand=True, pady=10)
 
-        # 快捷设置按钮
-        ttk.Button(self.btn_frame, text="⚙ 编辑常用温度", command=self.edit_common_temps).pack(anchor="w")
+        # 画布和滚动条
+        self.canvas = tk.Canvas(list_frame, bg="white")
+        self.scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=self.canvas.yview)
+        self.canvas.configure(yscrollcommand=self.scrollbar.set)
 
-        # ===== 电阻控制 =====
-        frame_res = ttk.LabelFrame(self.root, text="电阻控制", padding=10)
-        frame_res.pack(fill="x", padx=10, pady=5)
+        self.scrollbar.pack(side="right", fill="y")
+        self.canvas.pack(side="left", fill="both", expand=True)
 
-        ttk.Label(frame_res, text="电阻值 (Ω):").grid(row=0, column=0, sticky="w")
-        self.resistance_entry = ttk.Entry(frame_res, width=20)
-        self.resistance_entry.grid(row=0, column=1, padx=5, sticky="w")
-        ttk.Button(frame_res, text="设置", command=self.set_resistance).grid(row=0, column=2, padx=5)
+        self.device_frame = ttk.Frame(self.canvas)
+        self.canvas.create_window((0, 0), window=self.device_frame, anchor="nw")
 
-        ttk.Label(frame_res, text="快速操作:").grid(row=1, column=0, sticky="w", pady=10)
+        self.device_frame.bind("<Configure>", lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
 
-        btn_frame2 = ttk.Frame(frame_res)
-        btn_frame2.grid(row=2, column=0, columnspan=3)
+        # 设备网格布局参数
+        self.device_cols = 3  # 每行显示3个设备
+        self.device_count = 0
 
-        ttk.Button(btn_frame2, text="连接", command=self.connect_resistance, width=10).pack(side="left", padx=3)
-        ttk.Button(btn_frame2, text="开路 (OPEN)", command=self.set_open, width=12).pack(side="left", padx=3)
-        ttk.Button(btn_frame2, text="短路", command=self.short_resistance, width=10).pack(side="left", padx=3)
-        ttk.Button(btn_frame2, text="取消短路", command=self.unshort_resistance, width=10).pack(side="left", padx=3)
 
         # ===== 日志 =====
-        frame_log = ttk.LabelFrame(self.root, text="日志输出", padding=10)
+        frame_log = ttk.LabelFrame(self.root, text="日志", padding=10)
         frame_log.pack(fill="both", expand=True, padx=10, pady=5)
 
         self.log_text = scrolledtext.ScrolledText(frame_log, height=8, state="disabled")
@@ -305,61 +241,32 @@ class ResistanceGUI:
 
         ttk.Button(frame_log, text="清空日志", command=self.clear_log).pack(anchor="e", pady=5)
 
-        # 初始化
-        self.refresh_ports()
-        self.add_log("程序启动，请选择串口并连接")
+    def load_devices(self):
+        """加载保存的设备配置"""
+        if not os.path.exists(self.config_file):
+            return
 
-    def update_common_temp_buttons(self):
-        """更新常用温度按钮"""
-        # 清除旧按钮
-        for widget in self.btn_frame.winfo_children():
-            if isinstance(widget, ttk.Button) and widget.cget("text") != "⚙ 编辑常用温度":
-                widget.destroy()
+        try:
+            with open(self.config_file, 'r', encoding='utf-8') as f:
+                saved_devices = json.load(f)
+            for sn, info in saved_devices.items():
+                # 先创建设备实例（串口为None，稍后设置）
+                device = ResistanceTester(None, None, sn, None)
+                device.name = info.get('name', '未命名')
+                self.devices[sn] = device
+        except Exception as e:
+            print(f"加载设备配置失败: {e}")
 
-        # 重新添加按钮（排除编辑按钮）
-        temps = self.config.get_common_temps()
-        for temp in temps:
-            btn = ttk.Button(
-                self.btn_frame,
-                text=temp,
-                command=lambda t=temp: self.quick_select_temp(t)
-            )
-            btn.pack(side="left", padx=3, pady=5)
-
-    def edit_common_temps(self):
-        """编辑常用温度"""
-        dialog = tk.Toplevel(self.root)
-        dialog.title("编辑常用温度")
-        dialog.geometry("350x200")
-        dialog.transient(self.root)
-        dialog.grab_set()
-
-        ttk.Label(dialog, text="输入常用温度(用逗号分隔):").pack(pady=10)
-        ttk.Label(dialog, text="例如: 25C, 0C, -20C, 100C", font=('', 8)).pack()
-
-        entry = ttk.Entry(dialog, width=40)
-        entry.pack(pady=10)
-        entry.insert(0, ", ".join(self.config.get_common_temps()))
-
-        def save():
-            temps_str = entry.get()
-            temps = [t.strip() for t in temps_str.split(",") if t.strip()]
-            # 规范化格式（统一加C后缀）
-            normalized = []
-            for t in temps:
-                t = t.upper()
-                if not t.endswith('C'):
-                    t += 'C'
-                normalized.append(t)
-
-            if normalized:
-                self.config.set_common_temps(normalized)
-                self.update_common_temp_buttons()
-                self.add_log(f"已更新常用温度: {', '.join(normalized)}")
-            dialog.destroy()
-
-        ttk.Button(dialog, text="保存", command=save).pack(pady=10)
-        ttk.Button(dialog, text="取消", command=dialog.destroy).pack()
+    def save_devices(self):
+        """保存设备配置到JSON文件"""
+        try:
+            devices_data = {}
+            for sn, device in self.devices.items():
+                devices_data[sn] = {'name': getattr(device, 'name', '未命名')}
+            with open(self.config_file, 'w', encoding='utf-8') as f:
+                json.dump(devices_data, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"保存设备配置失败: {e}")
 
     def refresh_ports(self):
         ports = list_ports.comports()
@@ -368,43 +275,11 @@ class ResistanceGUI:
         if port_list:
             self.port_combo.current(0)
 
-    def on_temp_input(self, event=None):
-        """温度输入处理 - 直接设置电阻"""
-        temp_str = self.temp_entry.get().strip()
-        if not temp_str:
-            return
-
-        result = self.ntc.find_by_temp(temp_str)
-        if result:
-            res, temp = result
-            self.resistance_entry.delete(0, "end")
-            self.resistance_entry.insert(0, str(res))
-            self.add_log(f"温度 {temp} -> 阻值 {res}Ω")
-            # 直接设置电阻
-            self.set_resistance()
-        else:
-            messagebox.showwarning("警告", f"未找到温度 {temp_str} 对应的阻值")
-
-    def quick_select_temp(self, temp):
-        """快速选择温度 - 直接设置电阻"""
-        result = self.ntc.find_by_temp(temp)
-        if result:
-            res, t = result
-            self.resistance_entry.delete(0, "end")
-            self.resistance_entry.insert(0, str(res))
-            self.temp_entry.delete(0, "end")
-            self.temp_entry.insert(0, temp.replace('C', ''))
-            self.add_log(f"温度 {t} -> 阻值 {res}Ω")
-            # 直接设置电阻
-            self.set_resistance()
-        else:
-            messagebox.showwarning("警告", f"未找到温度 {temp}")
-
-    def toggle_connection(self):
-        if self.is_connected:
-            if self.tester:
-                self.tester.disconnect_serial()
-            self.is_connected = False
+    def toggle_serial_connection(self):
+        if self.is_serial_connected:
+            if self.ser and self.ser.is_open:
+                self.ser.close()
+            self.is_serial_connected = False
             self.connect_btn.config(text="连接串口")
             self.port_combo.config(state="readonly")
             self.add_log("串口已断开")
@@ -414,59 +289,255 @@ class ResistanceGUI:
                 messagebox.showwarning("警告", "请先选择串口")
                 return
 
-            baudrate = self.baudrate_var.get()
-            self.tester = ResistanceTester(port=port, baudrate=baudrate, verbose=True)
-
-            if self.tester.connect_serial():
-                self.is_connected = True
+            try:
+                self.ser = serial.Serial(port, self.baudrate_var.get(), timeout=1)
+                self.is_serial_connected = True
                 self.connect_btn.config(text="断开串口")
                 self.port_combo.config(state="disabled")
-                self.add_log(f"已连接到 {port}")
 
-    def set_resistance(self):
-        if not self.is_connected or not self.tester:
+                # 更新所有设备的串口对象
+                for device in self.devices.values():
+                    device.ser = self.ser
+                    device.port = port
+                    device.baudrate = self.baudrate_var.get()
+
+                self.add_log(f"已连接到 {port}")
+            except Exception as e:
+                messagebox.showerror("错误", f"连接失败: {e}")
+
+    def add_device(self):
+        if not self.is_serial_connected:
             messagebox.showwarning("警告", "请先连接串口")
             return
 
-        value = self.resistance_entry.get()
+        name = self.name_entry.get().strip() or "未命名"
+        sn = self.sn_entry.get().strip()
+        if not sn:
+            messagebox.showwarning("警告", "请输入SN码")
+            return
+
+        if sn in self.devices:
+            messagebox.showwarning("警告", f"设备 {sn} 已存在")
+            return
+
+        # 创建设备实例
+        device = ResistanceTester(
+            port=self.ser.port,
+            baudrate=self.ser.baudrate,
+            sn=sn,
+            serial_obj=self.ser
+        )
+        device.name = name  # 保存设备名称
+        self.devices[sn] = device
+
+        # 创建设备UI
+        self.create_device_ui(sn, device)
+        self.name_entry.delete(0, "end")
+        self.sn_entry.delete(0, "end")
+        self.add_log(f"已添加设备 {name} (SN:{sn})")
+        self.save_devices()  # 保存配置
+
+    def create_device_ui(self, sn, device):
+        """创建设备控制UI"""
+        name = getattr(device, 'name', '未命名')
+        frame = ttk.LabelFrame(self.device_frame, text=f"{name} (SN:{sn})", padding=5)
+        row = self.device_count // self.device_cols
+        col = self.device_count % self.device_cols
+        frame.grid(row=row, column=col, padx=3, pady=3, sticky="n")
+        self.device_count += 1
+
+        # 选择复选框
+        var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(frame, variable=var).pack(anchor="w")
+
+        # 电阻值设置 (第一行)
+        res_frame = ttk.Frame(frame)
+        res_frame.pack(fill="x", pady=2)
+        ttk.Label(res_frame, text="阻值:").pack(side="left", padx=2)
+        entry = ttk.Entry(res_frame, width=8)
+        entry.pack(side="left", padx=2)
+        ttk.Button(res_frame, text="设置", command=lambda: self.set_device_resistance(sn, entry), width=4).pack(side="left", padx=2)
+
+        # 温度设置 (第二行)
+        temp_frame = ttk.Frame(frame)
+        temp_frame.pack(fill="x", pady=2)
+        ttk.Label(temp_frame, text="温度:").pack(side="left", padx=2)
+        temp_entry = ttk.Entry(temp_frame, width=8)
+        temp_entry.pack(side="left", padx=2)
+        ttk.Button(temp_frame, text="设置", command=lambda: self.set_device_temp(sn, temp_entry), width=4).pack(side="left", padx=2)
+
+        # 保存UI引用
+        device.ui_entry = entry
+        device.ui_var = var  # 保存复选框变量
+
+        # 当前电阻值显示
+        label = ttk.Label(frame, text="当前: --", foreground="blue")
+        label.pack(pady=2)
+        device.resistance_label = label
+        device.ui_frame = frame  # 保存frame引用
+
+        # 创建右键菜单
+        menu = tk.Menu(frame, tearoff=0)
+        menu.add_command(label="重命名", command=lambda: self.rename_device(sn, device, frame))
+        menu.add_command(label="删除", command=lambda: self.delete_single_device(sn))
+        frame.bind("<Button-3>", lambda e: menu.post(e.x_root, e.y_root))
+
+    def delete_single_device(self, sn):
+        """删除单个设备"""
+        device = self.devices.get(sn)
+        if not device:
+            return
+        name = getattr(device, 'name', '未命名')
+        # 通过frame引用删除
+        if hasattr(device, 'ui_frame'):
+            device.ui_frame.destroy()
+        del self.devices[sn]
+        self.add_log(f"已删除设备 {name} (SN:{sn})")
+        self.rebuild_device_grid()
+        self.save_devices()
+
+    def rename_device(self, sn, device, frame):
+        """重命名设备"""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("重命名设备")
+        dialog.geometry("300x120")
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        ttk.Label(dialog, text="输入新名称:").pack(pady=10)
+        entry = ttk.Entry(dialog, width=25)
+        entry.pack(pady=5)
+        entry.insert(0, device.name)
+
+        def save_rename():
+            new_name = entry.get().strip()
+            if new_name:
+                device.name = new_name
+                # 更新标题
+                frame.config(text=f"{new_name} (SN:{sn})")
+                self.save_devices()  # 保存配置
+                self.add_log(f"已将设备重命名为: {new_name} (SN:{sn})")
+            dialog.destroy()
+
+        ttk.Button(dialog, text="确定", command=save_rename).pack(pady=5)
+        ttk.Button(dialog, text="取消", command=dialog.destroy).pack()
+
+    def set_device_resistance(self, sn, entry):
+        """设置设备电阻值"""
+        device = self.devices.get(sn)
+        if not device:
+            return
+
+        value = entry.get().strip()
         if not value:
             messagebox.showwarning("警告", "请输入电阻值")
             return
 
-        if self.tester.set_custom_resistance(value):
-            self.add_log(f"已设置电阻值: {value}Ω")
+        if device.set_resistance(value):
+            name = getattr(device, 'name', '未命名')
+            self.add_log(f"[{name}({sn})] 已设置电阻值: {value}Ω")
+        else:
+            messagebox.showerror("错误", f"[{sn}] 设置失败")
 
-    def set_open(self):
-        if not self.is_connected or not self.tester:
-            messagebox.showwarning("警告", "请先连接串口")
+    def set_device_temp(self, sn, temp_entry):
+        """通过温度设置设备电阻"""
+        device = self.devices.get(sn)
+        if not device:
             return
 
-        if self.tester.disconnect_resistance():
-            self.add_log("已设置为开路状态 (OPEN)")
+        temp_str = temp_entry.get().strip()
+        result = self.ntc.find_by_temp(temp_str)
 
-    def connect_resistance(self):
-        if not self.is_connected or not self.tester:
-            messagebox.showwarning("警告", "请先连接串口")
+        if result:
+            res, temp = result
+            if device.set_resistance(str(res)):
+                name = getattr(device, 'name', '未命名')
+                self.add_log(f"[{name}({sn})] 温度 {temp} -> 阻值 {res}Ω")
+        else:
+            messagebox.showwarning("警告", f"未找到温度 {temp_str} 对应的阻值")
+
+    def selected_connect(self):
+        """选中设备连接"""
+        for sn, device in self.devices.items():
+            if device.ui_var.get():
+                device.connect_resistance()
+                device.current_resistance = "已连接"
+                device.update_label()
+                name = getattr(device, 'name', '未命名')
+                self.add_log(f"[{name}({sn})] 电阻已连接")
+
+    def selected_open(self):
+        """选中设备开路"""
+        for sn, device in self.devices.items():
+            if device.ui_var.get():
+                device.disconnect_resistance()
+                device.current_resistance = "OPEN"
+                device.update_label()
+                name = getattr(device, 'name', '未命名')
+                self.add_log(f"[{name}({sn})] 已设置为开路")
+
+    def selected_short(self):
+        """选中设备短路"""
+        for sn, device in self.devices.items():
+            if device.ui_var.get():
+                device.short_resistance()
+                device.current_resistance = "短路"
+                device.update_label()
+                name = getattr(device, 'name', '未命名')
+                self.add_log(f"[{name}({sn})] 已设置为短路")
+
+    def selected_unshort(self):
+        """取消选中设备短路"""
+        for sn, device in self.devices.items():
+            if device.ui_var.get():
+                device.unshort_resistance()
+                name = getattr(device, 'name', '未命名')
+                self.add_log(f"[{name}({sn})] 取消短路")
+
+    def select_all(self):
+        """全选"""
+        for device in self.devices.values():
+            device.ui_var.set(True)
+
+    def deselect_all(self):
+        """取消全选"""
+        for device in self.devices.values():
+            device.ui_var.set(False)
+
+    def delete_selected(self):
+        """删除选中的设备"""
+        # 收集要删除的SN
+        to_delete = []
+        for sn, device in self.devices.items():
+            if device.ui_var.get():
+                to_delete.append(sn)
+
+        if not to_delete:
             return
 
-        if self.tester.connect_resistance():
-            self.add_log("电阻已连接")
+        # 删除设备
+        for sn in to_delete:
+            device = self.devices.get(sn)
+            name = getattr(device, 'name', '未命名')
+            if device and hasattr(device, 'ui_entry'):
+                # 通过frame引用删除
+                device.ui_entry.master.master.destroy()
+            del self.devices[sn]
+            self.add_log(f"已删除设备 {name} (SN:{sn})")
 
-    def short_resistance(self):
-        if not self.is_connected or not self.tester:
-            messagebox.showwarning("警告", "请先连接串口")
-            return
+        self.rebuild_device_grid()
+        self.save_devices()  # 保存配置
 
-        if self.tester.short_resistance():
-            self.add_log("电阻已设置为短路状态")
+    def rebuild_device_grid(self):
+        """重新布局设备网格"""
+        # 清除所有设备
+        for widget in self.device_frame.winfo_children():
+            widget.destroy()
 
-    def unshort_resistance(self):
-        if not self.is_connected or not self.tester:
-            messagebox.showwarning("警告", "请先连接串口")
-            return
-
-        if self.tester.unshort_resistance():
-            self.add_log("电阻短路状态已取消")
+        # 重新添加所有设备
+        self.device_count = 0
+        for sn, device in self.devices.items():
+            self.create_device_ui(sn, device)
 
     def add_log(self, message):
         timestamp = time.strftime("%H:%M:%S")
