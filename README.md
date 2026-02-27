@@ -2,9 +2,10 @@
 
 本工具集用于控制程控电阻设备(`RM550`)，主要应用场景为车载测试，支持模拟 BIN 档位电阻以及 NTC 温度电阻特性。本项目使用 `uv` 进行环境和依赖管理。
 
-项目包含两个主要脚本：
+项目包含三个主要脚本：
 1. **`resistance_cli.py`**: 通用电阻控制 CLI 工具，支持直接设置阻值、控制继电器通断及短路状态。
 2. **`temp_resistance_cli.py`**: 基于温度的电阻设置 CLI 工具，通过查表将温度转换为对应的电阻值并设置。
+3. **`resistance_gui.py`**: 图形界面工具 (GUI)，提供可视化的电阻控制界面，支持设置阻值、控制继电器状态。
 
 ## 环境准备
 
@@ -15,7 +16,7 @@
    ```bash
    uv sync
    # 或者手动添加依赖
-   uv add pyserial
+   uv add pyserial dearpygui
    ```
 
 ## 1. 通用电阻控制 (`resistance_cli.py`)
@@ -83,6 +84,32 @@ uv run temp_resistance_cli.py -p COM3 -t 25 -f ntc_res.txt
 - `-t`, `--temp`: **(必填)** 目标温度 (例如: 25, -40, 25C)。
 - `-f`, `--file`: **(必填)** 电阻值对应文件路径 (例如: ntc_res.txt)。
 - `--verbose`: 显示详细的执行过程和日志信息（默认只输出结果）。
+
+## 3. 图形界面工具 (`resistance_gui.py`)
+
+提供可视化的图形界面，用于控制程控电阻设备。
+
+### 使用方法
+
+```bash
+# 启动 GUI
+uv run resistance_gui.py
+```
+
+### 配置文件
+
+GUI 使用 `resistance_gui_config.json` 配置文件，可配置以下参数：
+- `port`: 默认串口号 (如 `COM3`)
+- `baudrate`: 串口波特率，默认为 9600
+- `default_resistance`: 默认电阻值 (欧姆)
+- `max_resistance`: 最大电阻值 (欧姆)
+
+### 界面功能
+
+- 设置电阻值 (通过滑块或输入框)
+- 控制继电器状态 (连接/断开)
+- 短路/取消短路
+- 实时显示当前设置状态
 
 ## 配置文件说明
 

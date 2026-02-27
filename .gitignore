@@ -10,3 +10,6 @@ wheels/
 .venv
 
 resistance_test.log
+
+# Claude Code
+.claude/
